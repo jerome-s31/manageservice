@@ -1,0 +1,837 @@
+- hosts:  "{{ variable_host | default('all') }}"
+  become:  yes
+  become_method: sudo
+  serial: 1
+  ignore_errors: yes
+  #ignore_errors: no
+  vars:
+    actionTodo: "{{ variable_actionTodo }}"
+    #allAs: [ "httpd" "httpd2" "httpd3" "webu" "tomcat" "addin" "backa" "polla" "ovp_event_manager_portal" "ovp_event_manager_advanced" ]
+    #servicesList: "{{ variable_servicesList |default('{{allAs}}') }}"
+    #servicesList: "{{ variable_servicesList }}" ==> replace by tags
+    pathOperatingRedis: "/opt/operating/bin"
+    affiche_res: "all results:"
+
+  tasks:
+
+##### Check OS ####
+
+  - name: Register os
+    tags: os
+    shell: "cat /etc/redhat-release |awk '{print $7}'i"
+    register: os
+
+#  - debug: var=os
+#    tags: os
+  
+  - name: Check if it Event server
+    tags: eventservice
+    stat:
+     path: "/etc/init.d/ovp_event_manager_portal"
+    register: chekOvpEventManagerPortalserverexist
+
+#  - debug: var=chekOvpEventManagerPortalserverexist
+#    tags: eventservice
+
+  - name: Check if it Redis server
+    tags: redis
+    stat: 
+     path: "{{ pathOperatingRedis }}/OperateRedis.ksh"
+    register: checkREDISserverexist
+
+#  - debug: var=checkREDISserverexist
+
+  - name: Check if it is a webu server
+    tags: webu
+    #shell: "/usr/bin/systemctl list-units --type=service | grep webu"
+    stat:
+     path: "/etc/systemd/system/webu.service"
+    register: checkWEBUserverexist
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkWEBUserverexist
+#    tags: webu
+
+  - name: Check if it is an addin server
+    tags: addin
+#    shell: "systemctl list-units --type=service | grep addin"
+    stat:
+     path: "/etc/systemd/system/addin.service"
+    register: checkADDINserverexist
+    failed_when: no
+    changed_when: no
+
+  - name: Check if it is a backa server
+    tags: backa
+#    shell: "systemctl list-units --type=service|grep backa"
+    stat:
+     path: "/etc/systemd/system/backa.service"
+    register: checkBACKAserverexist
+    failed_when: no
+    changed_when: no
+
+  - name: Check if it is a polla server which is started
+    tags: polla
+#    shell: "systemctl list-units --type=service|grep polla"
+    stat:
+     path: "/etc/systemd/system/polla.service"
+    register: checkPOLLAserverexist
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkPOLLAserverexist
+#    tags: polla
+
+
+  - name: Check if it a Tomcat Server
+    tags: tomcat
+    shell: "cat /etc/tomcattab|grep opv|awk -F : '{print $1}'"
+    register: checkTOMCATserver
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkTOMCATserver.stdout_lines
+#    tags: tomcat
+
+  - name: check if it is an HTTPD server
+    tags: httpd
+    stat:
+     path: "/etc/init.d/httpd"
+    register: checkHTTPDserver
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkHTTPDserver
+#    tags: httpd
+
+
+##### REDIS ########
+
+
+  - name: Start redis server service
+    tags: redis
+    command: "{{ item }}"
+    with_items:
+      - "{{ pathOperatingRedis }}/OperateRedis.ksh start"
+      - "{{ pathOperatingRedis }}/OperateRedis.ksh sentinelstart"
+    register: statusRedisServer
+    when:
+      - actionTodo == "start"
+      - checkREDISserverexist.stat.exists == True
+
+  - name: Stop redis server service
+    tags: redis
+    command: "{{ item }}"
+    with_items:
+      - "{{ pathOperatingRedis }}/OperateRedis.ksh sentinelstop"
+      - "{{ pathOperatingRedis }}/OperateRedis.ksh stop"
+    register: statusRedisServer
+    when:
+      - actionTodo == "stop"
+      - checkREDISserverexist.stat.exists == True
+
+  - name: Status redis server service
+    tags: redis
+    command: "{{ item }}"
+    with_items:
+      - "{{ pathOperatingRedis }}/OperateRedis.ksh status"
+    when:
+      - actionTodo == "status"
+      - checkREDISserverexist.stat.exists == True
+    register: statusRedisServer
+
+  - debug: var=statusRedisServer
+    tags: redis
+    when:
+       - actionTodo == "status" or actionTodo == "start" or actionTodo == "stop"
+       - checkREDISserverexist.stat.exists == True
+
+  - name: Status redis sentinel service
+    tags: redis
+    command: "{{ item }}"
+    with_items:
+      - "{{ pathOperatingRedis }}/OperateRedis.ksh sentinelstatus"
+    when:
+      - actionTodo == "status"
+      - checkREDISserverexist.stat.exists == True
+    register: statusRedisSentinel
+
+  - debug: var=statusRedisSentinel.results[0].stderr_lines
+    tags: redis
+    when: 
+      - actionTodo == "status"
+      - checkREDISserverexist.stat.exists == True
+
+
+##### EVENT ########
+
+  - name: Start event service
+    tags: eventservice
+    shell: "{{ item }}"
+    with_items:
+      - "cd /opt/application/opvapp/event/current/sh/ && nohup ./ovp_event_manager_portal.sh  &"
+      - "cd /opt/application/opvapp/event/current/sh/ && nohup ./ovp_event_manager_advanced.sh &"
+    async: 45
+    poll: 0 
+    when:
+      - actionTodo == "start"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+  - name: Retrieve pidnumber portal
+    tags: eventservice
+    shell: "ps -ef | grep -v grep | grep -w portal | awk '{print $2}'"
+    register: running_processes_portal
+    when:
+      - actionTodo == "stop"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+  - name: Retrieve pidnumber advanced 
+    tags: eventservice
+    shell: "ps -ef | grep -v grep | grep -w advanced | awk '{print $2}'"
+    register: running_processes_advanced
+    when:
+      - actionTodo == "stop"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+  - debug:
+      var: running_processes_portal
+      verbosity: 2
+    tags: eventservice
+    when:
+      - actionTodo == "stop"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+  - debug:
+      var: running_processes_advanced
+      verbosity: 2
+    tags: eventservice
+    when:
+      - actionTodo == "stop"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+
+  - name: Kill running processes Portal and Advanced
+    tags: eventservice
+    shell: "kill -TERM {{ item }}"
+    with_items:
+      - "{{ running_processes_portal.stdout_lines }}"
+      - "{{ running_processes_advanced.stdout_lines }}"
+    when:
+      - actionTodo == "stop"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+  - wait_for:
+      path: "/proc/{{ item }}/status"
+      state: absent
+    with_items:
+      - "{{ running_processes_portal.stdout_lines }}"
+      - "{{ running_processes_advanced.stdout_lines }}"
+    ignore_errors: yes
+    tags: eventservice
+    register: killed_processes_all
+    when:
+      - actionTodo == "stop"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+  - name: Stop event service - delete lock and pid file
+    tags: eventservice
+    command: "{{ item }}"
+    with_items:
+      - "rm -f /var/run/ovp_event_manager_portal.pid"
+      - "rm -f /var/lock/ovp_event_manager_portal.lock"
+      - "rm -f /var/run/ovp_event_manager_advanced.pid"
+      - "rm -f /var/lock/ovp_event_manager_advanced.lock"
+    when:
+      - actionTodo == "stop"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+
+  - name: Status event service portal
+    tags: eventservice
+    command:  "{{ item }}"
+    with_items:
+      - "/opt/application/opvapp/event/current/init.d/ovp_event_manager_portal status"
+    when:
+      - actionTodo == "status"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+    register: statusEventManagerPortal
+
+  - debug: var=statusEventManagerPortal
+    tags: eventservice
+    when:
+      - actionTodo == "status"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+  - name: Status event service advanced
+    tags: eventservice
+    command: "{{ item }}"
+    with_items:
+      -  "/opt/application/opvapp/event/current/init.d/ovp_event_manager_advanced status"
+    when:
+      - actionTodo == "status"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+    register: statuspEventManagerPortalserver
+
+  - debug: var=statuspEventManagerPortalserver
+    tags: eventservice
+    when:
+      - actionTodo == "status"
+      - chekOvpEventManagerPortalserverexist.stat.exists == True
+
+
+##### httpd ########
+
+  - name: Start httpd server
+    tags: httpd
+    service:
+      name: httpd
+      state: started
+    register: statusHttpd
+    when:
+      - actionTodo == "start"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Stop httpd server
+    tags: httpd
+    service:
+      name: httpd
+      state: stopped
+    register: statusHttpd
+    when:
+      - actionTodo == "stop"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Status httpd server
+    tags: httpd
+    command: "{{ item }}"
+    with_items:
+      - "systemctl status httpd"
+    when:
+      - actionTodo == "status"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+    register: statusHttpd
+    failed_when: no
+    changed_when: no
+
+  - debug:
+      var: statusHttpd.results[0].stdout_lines
+    tags: webu
+    when:
+      - actionTodo == "status" or actionTodo == "start" or actionTodo == "stop"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+
+##### webu ########
+
+  - name: Start webu server
+    tags: webu
+    service:
+      name: webu
+      state: started
+    register: statusWebu
+    when:
+      - actionTodo == "start"
+      - checkWEBUserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Stop webu server
+    tags: webu
+    service:
+      name: webu
+      state: stopped
+    register: statusWebu
+    when:
+      - actionTodo == "stop"
+      - checkWEBUserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Status webu server
+    tags: webu
+    command: "{{ item }}"
+    with_items:
+      - "systemctl status webu"
+    when:
+      - actionTodo == "status"
+      - checkWEBUserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+    register: statusWebu
+    failed_when: no
+    changed_when: no
+
+  - debug:
+      var: statusWebu.results[0].stdout_lines
+    tags: webu
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkWEBUserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+##### addin ########
+
+  - name: Start addin server
+    tags: addin
+    service:
+      name: addin
+      state: started
+    register: statusAddin
+    when:
+      - actionTodo == "start"
+      - checkADDINserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Stop addin server
+    tags: addin
+    service:
+      name: addin
+      state: stopped
+    register: statusAddin
+    when:
+      - actionTodo == "stop"
+      - checkADDINserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Status addin server
+    tags: addin
+    command: "{{ item }}"
+    with_items:
+      - "systemctl status addin"
+    when:
+      - actionTodo == "status"
+      - checkADDINserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+    register: statusAddin
+    failed_when: no
+    changed_when: no
+
+
+  - debug:
+      var: statusAddin.results[0].stdout_lines
+    tags: addin
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkADDINserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+
+##### backa ########
+
+  - name: Start backa server
+    tags: backa
+    service:
+      name: backa
+      state: started
+    register: statusBacka
+    when:
+      - actionTodo == "start"
+      - checkBACKAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Stop backa server
+    tags: backa
+    service:
+      name: backa
+      state: stopped
+    register: statusBacka
+    when:
+      - actionTodo == "stop"
+      - checkBACKAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Status backa server
+    tags: backa
+    command: "{{ item }}"
+    with_items:
+      - "systemctl status backa"
+    when:
+      - actionTodo == "status"
+      - checkBACKAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+    register: statusBacka
+    failed_when: no
+    changed_when: no
+
+
+  - debug:
+      var: statusBacka.results[0].stdout_lines
+    tags: backa
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkBACKAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+
+##### polla ########
+
+  - name: Start Polla server
+    tags: polla
+    service:
+      name: polla
+      state: started
+    register: statusPolla
+    when:
+      - actionTodo == "start"
+      - checkPOLLAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Stop Polla server
+    tags: polla
+    service:
+      name: polla
+      state: stopped
+    register: statusPolla
+    when:
+      - actionTodo == "stop"
+      - checkPOLLAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+  - name: Status Polla server
+    tags: polla
+    command: "{{ item }}"
+    with_items:
+      - "systemctl status polla"
+    when:
+      - actionTodo == "status"
+      - checkPOLLAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+    register: statusPolla
+    failed_when: no
+    changed_when: no
+
+  - debug:
+      var: statusPolla.results[0].stdout_lines
+    tags: polla
+    when:
+      - actionTodo == "status" or actionTodo == "start" or actionTodo == "stop"
+      - checkPOLLAserverexist.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('7') != -1
+
+
+##### TOMCAT ########
+
+  - debug: 
+      var: checkTOMCATserver.stdout_lines
+      verbosity: 2
+
+  - name: Manage TOMCAT server
+    tags: tomcat
+    command: "/opt/operating/bin/OperateTomcatAll.ksh {{ actionTodo }} {{ item }}"
+    with_items:
+      - "{{ checkTOMCATserver.stdout_lines }}"
+    register: statusTOMCAT
+    when:
+      - checkTOMCATserver.stdout != ""
+    failed_when: no
+    changed_when: no
+
+  - debug: var=statusTOMCAT.results[0].stdout_lines
+    tags: tomcat
+    when:
+      - checkTOMCATserver.stdout != ""
+
+##### HTTPD and REHL 6 ########
+
+  - name: Start HTTPD server
+    tags: httpd
+    command: "{{ item }}"
+    with_items:
+      -  "service httpd start"
+    register: statusHTTPD
+    when:
+      - actionTodo == "start"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('6') != -1
+    failed_when: no
+    changed_when: no
+
+  - name: Stop HTTPD server
+    tags: httpd
+    command: "{{ item }}"
+    with_items:
+      -  "service httpd stop"
+    register: statusHTTPD
+    when:
+      - actionTodo == "stop"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('6') != -1
+    failed_when: no
+    changed_when: no
+
+  - name: Status HTTPD server
+    tags: httpd
+    command: "{{ item }}"
+    with_items:
+      -  "service httpd status"
+    register: statusHTTPD
+    when:
+      - actionTodo == "status"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('6') != -1
+    failed_when: no
+    changed_when: no
+
+  - debug:
+      var: statusHTTPD.results[0].stdout_lines
+    tags: httpd
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkHTTPDserver.stat.exists == True
+      - hostvars[inventory_hostname].ansible_distribution_version.find('6') != -1
+
+##### NGINX ########
+
+  - name: Check if it is a NGINX Server
+    tags: nginx
+    command: "rpm -q nginx"
+    register: checkNGINXserver
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkNGINXserver 
+#    tags: nginx
+
+  - name: Start NGINX
+    tags: nginx
+    service:
+      name: nginx
+      state: started
+    register: statusNGINX
+    when:
+      - actionTodo == "start"
+      - checkNGINXserver.stdout.find('package nginx is not installed') == -1
+
+  - name: Stop NGINX
+    tags: nginx
+    service:
+      name: nginx
+      state: stopped
+    register: statusNGINX
+    when:
+      - actionTodo == "stop"
+      - checkNGINXserver.stdout.find('package nginx is not installed') == -1
+
+  - name: Status NGINX
+    tags: nginx
+    command: "systemctl status nginx"
+    when:
+      - actionTodo == "status"
+      - checkNGINXserver.stdout.find('package nginx is not installed') == -1
+    register: statusNGINX
+    failed_when: no
+    changed_when: no
+
+
+  - debug: var=statusNGINX.stdout_lines
+    tags: nginx
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkNGINXserver.stdout.find('package nginx is not installed') == -1
+
+##### KIBANA ########
+
+  - name: Check if it is a KIBANA Server
+    tags: kibana
+    command: "rpm -q kibana"
+    register: checkKIBANAserver
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkKIBANAserver
+#    tags: kibana
+
+  - name: Start KIBANA
+    tags: kibana
+    service:
+      name: kibana
+      state: started
+    register: statusKIBANA
+    when:
+      - actionTodo == "start"
+      - checkKIBANAserver.stdout.find('package kibana is not installed') == -1
+
+  - name: Stop KIBANA
+    tags: kibana
+    service:
+      name: kibana
+      state: stopped
+    register: statusKIBANA
+    when:
+      - actionTodo == "stop"
+      - checkKIBANAserver.stdout.find('package kibana is not installed') == -1
+
+  - name: Status KIBANA
+    tags: kibana
+    command: "systemctl status kibana"
+    when:
+      - actionTodo == "status"
+      - checkKIBANAserver.stdout.find('package kibana is not installed') == -1
+    register: statusKIBANA
+    failed_when: no
+    changed_when: no
+
+
+  - debug: var=statusKIBANA.stdout_lines
+    tags: kibana
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkKIBANAserver.stdout.find('package kibana is not installed') == -1
+
+##### ELASTICSEARCH ########
+
+  - name: Check if it is a ELASTICSEARCH Server
+    tags: elastic
+    command: "rpm -q elasticsearch"
+    register: checkELASTICSEARCHserver
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkELASTICSEARCHserver
+#    tags: elastic
+
+  - name: Start ELASTICSEARCH
+    tags: elastic
+    service:
+      name: elasticsearch
+      state: started
+    register: statusELASTICSEARCH
+    when:
+      - actionTodo == "start"
+      - checkELASTICSEARCHserver.stdout.find('package elasticsearch is not installed') == -1
+
+  - name: Stop ELASTICSEARCH
+    tags: elastic
+    service:
+      name: elasticsearch
+      state: stopped
+    register: statusELASTICSEARCH
+    when:
+      - actionTodo == "stop"
+      - checkELASTICSEARCHserver.stdout.find('package elasticsearch is not installed') == -1
+
+  - name: Status ELASTICSEARCH
+    tags: elastic
+    command: "systemctl status elasticsearch"
+    when:
+      - actionTodo == "status"
+      - checkELASTICSEARCHserver.stdout.find('package elasticsearch is not installed') == -1
+    register: statusELASTICSEARCH
+    failed_when: no
+    changed_when: no
+
+
+  - debug: var=statusELASTICSEARCH.stdout_lines
+    tags: elastic
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkELASTICSEARCHserver.stdout.find('package elasticsearch is not installed') == -1
+
+##### LOGSTASH ########
+
+  - name: Check if it is a LOGSTASH Server
+    tags: logstash
+    command: "rpm -q logstashh"
+    register: checkLOGSTASHserver
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkLOGSTASHserver
+#    tags: logstash
+
+  - name: Start LOGSTASH
+    tags: logstash
+    service:
+      name: logstash
+      state: started
+    register: statusLOGSTASH
+    when:
+      - actionTodo == "start"
+      - checkLOGSTASHserver.stdout.find('package logstash is not installed') == -1
+
+  - name: Stop LOGSTASH
+    tags: logstash
+    service:
+      name: logstash
+      state: stopped
+    register: statusLOGSTASH
+    when:
+      - actionTodo == "stop"
+      - checkLOGSTASHserver.stdout.find('package logstash is not installed') == -1
+
+  - name: Status LOGSTASH
+    tags: logstash
+    command: "systemctl status logstash"
+    when:
+      - actionTodo == "status"
+      - checkLOGSTASHserver.stdout.find('package logstash is not installed') == -1
+    register: statusLOGSTASH
+    failed_when: no
+    changed_when: no
+
+
+  - debug: var=statusLOGSTASH
+    tags: logstash
+    when:
+      - actionTodo == "status" or actionTodo == "stop" or actionTodo == "start"
+      - checkLOGSTASHserver.stdout.find('package logstash is not installed') == -1
+
+##### MYSQL ########
+
+  - name: Check if it is a MYSQL DBServer
+    tags: mysql
+    stat:
+     path: "/opt/operating/bin/OperateMysqlAll.ksh"
+    register: checkMYSQLserver
+    failed_when: no
+    changed_when: no
+
+#  - debug: var=checkMYSQLserver
+#    tags: mysql
+
+  - name: Start MYSQL
+    tags: mysql
+    command: "service mysql start"
+    when:
+      - actionTodo == "start"
+      - checkMYSQLserver.stat.exists == True
+    register: statusMYSQL
+    failed_when: no
+    changed_when: no
+
+  - name: Stop MYSQL
+    tags: mysql
+    command: "service mysql stop"
+    when:
+      - actionTodo == "stop"
+      - checkMYSQLserver.stat.exists == True
+    register: statusMYSQL
+    failed_when: no
+    changed_when: no
+
+  - name: Status MYSQL
+    tags: mysql
+    command: "service mysql status"
+    when:
+      - actionTodo == "status"
+      - checkMYSQLserver.stat.exists == True
+    register: statusMYSQL
+    failed_when: no
+    changed_when: no
+
+
+  - debug: var=statusMYSQL #.stdout_lines #[0]
+    tags: mysql
+    when:
+      - actionTodo == "status" or actionTodo == "start" or actionTodo == "stop"
+      - checkMYSQLserver.stat.exists == True
+
+
+#  - debug: msg={{os.stdout_lines}}
+
+  - debug:
+      var: "{{ hostvars[inventory_hostname].ansible_distribution_version }}"
+      verbosity: 2 
+
